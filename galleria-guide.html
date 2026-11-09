@@ -1,29 +1,32 @@
 <!doctype html>
 <html lang="it">
 <!--
-COME PUBBLICARE
-1. Carica questo HTML nella radice del repository pubblico.
-2. Crea accanto all'HTML una cartella chiamata pdf e carica lì i documenti.
-3. Abilita GitHub Pages nelle impostazioni del repository e apri l'URL Pages.
-4. Se Pages pubblica dalla cartella docs, metti HTML e pdf dentro docs e
-   imposta sourceRoot: "docs" nel blocco CONFIG più sotto.
-5. Se il ramo Pages non è quello predefinito del repository, imposta branch.
-6. Usa nomi esatti: GitHub distingue maiuscole/minuscole. Niente sottocartelle.
-7. WordPress: inserisci nel blocco HTML personalizzato questo iframe,
-   sostituendo UTENTE, REPOSITORY e il nome dell'HTML se lo hai rinominato:
-   <iframe src="https://UTENTE.github.io/REPOSITORY/galleria-guide-github.html"
-     title="Guide del LUDiCa" width="100%" height="900"
-     style="border:0;width:100%;display:block" loading="lazy"></iframe>
-
-Le schede prendono il titolo dal nome del PDF; la ricerca riguarda il titolo.
-Dopo ogni caricamento attendi la pubblicazione di Pages e ricarica la galleria.
-Il lettore nativo del browser offre i propri comandi; su dispositivi che non
-supportano PDF incorporati usa Apri PDF. Non sono incluse miniature delle pagine.
-L'elenco usa l'API pubblica GitHub, soggetta a limiti di richieste e di elementi
-per cartella. Documentazione: https://docs.github.com/en/rest/repos/contents
-Non sono richiesti token, plugin, file JSON o librerie esterne per il lettore.
-Verificata la logica con dati simulati; rendering PDF e repository reale da
-collaudare dopo la pubblicazione. Nessun PDF dell'utente è incluso nel file.
+GALLERIA HTML PER GITHUB PAGES — CATALOGO DA GOOGLE SHEETS CSV
+Sfondo della pagina trasparente; le schede e il lettore mantengono il proprio sfondo.
+Per mostrare/nascondere titolo, sottotitolo e contatore imposta CONFIG.showHeader
+su true oppure false nel blocco script. La ricerca resta sempre disponibile.
+Puoi anche usare ?header=false o ?header=true nell'URL dell'iframe:
+questa opzione ha precedenza sull'impostazione nel file.
+Carica questo file su GitHub Pages. I dati arrivano dal CSV indicato in CSV_URL.
+Campi: titolo | contenuto | url per leggere | url immagine anteprima.
+Le colonne aggiuntive e le righe senza titolo o URL valido vengono ignorate.
+Il campo url per leggere deve contenere un collegamento diretto al PDF:
+https://UTENTE.github.io/REPOSITORY/pdf/guida.pdf
+Oppure un percorso relativo a questo HTML, come pdf/guida.pdf.
+Le anteprime possono essere URL assoluti oppure percorsi relativi all'HTML.
+Gli URL vengono rispettati, senza conversioni automatiche dei link GitHub blob.
+I link github.com/.../blob/... portano a una pagina web: usa gli URL Pages.
+Il foglio deve restare pubblicato sul web. Nessun plugin o file JSON necessario.
+La ricerca usa titolo e contenuto, non il testo interno dei PDF.
+Il lettore e il pulsante Apri PDF usano entrambi l'URL della riga del CSV.
+Su smartphone il supporto del lettore incorporato dipende dal browser:
+se il documento non appare, usa Apri PDF.
+Per incorporare in WordPress usa un blocco HTML personalizzato:
+<iframe src="https://UTENTE.github.io/REPOSITORY/galleria-guide-github.html"
+  title="Guide del LUDiCa" width="100%" height="900"
+  style="border:0;width:100%;display:block" loading="lazy"></iframe>
+Le modifiche al foglio appaiono al ricaricamento, dopo i tempi di pubblicazione
+Google. Non aprire questo file con file://: usa l'indirizzo HTTPS Pages.
 -->
 <head>
   <meta charset="utf-8">
@@ -33,7 +36,9 @@ collaudare dopo la pubblicazione. Nessun PDF dell'utente è incluso nel file.
     <style>
     :root{--ink:#202124;--muted:#64717b;--red:#c50000;--blue:#008fd5;--paper:#f4f7f9;--line:#d9e0e5;--white:#fff;--shadow:0 12px 32px rgba(25,38,48,.13)}
     *{box-sizing:border-box}
-    body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+    html{background:transparent}
+    [hidden]{display:none!important}
+    body{margin:0;background:transparent;color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
     button,input{font:inherit}
     button{cursor:pointer}
     .site{max-width:1220px;margin:auto;padding:clamp(22px,4vw,58px)}
@@ -85,7 +90,7 @@ collaudare dopo la pubblicazione. Nessun PDF dell'utente è incluso nel file.
 </head>
 <body>
   <main class="site">
-    <header class="hero">
+    <header class="hero" id="galleryHeader" hidden>
       <div>
         <div class="eyebrow">Le guide L U Di Ca</div>
         <h1>Le guide del LUDiCa</h1>
@@ -94,10 +99,10 @@ collaudare dopo la pubblicazione. Nessun PDF dell'utente è incluso nel file.
       <div class="counter" aria-live="polite"><strong id="count">0</strong><span>guide</span></div>
     </header>
     <div class="tools">
-      <label class="sr-only" for="search">Cerca per titolo delle guide</label>
-      <input class="search" id="search" type="search" placeholder="Cerca una guida…" autocomplete="off">
+      <label class="sr-only" for="search">Cerca nelle guide</label>
+      <input class="search" id="search" type="search" placeholder="Cerca per titolo o descrizione…" autocomplete="off">
     </div>
-    <noscript>Attiva JavaScript per caricare l’elenco dei PDF da GitHub.</noscript>
+    <noscript>Attiva JavaScript per caricare le guide dal foglio Google.</noscript>
     <section class="grid" id="gallery" aria-live="polite"><div class="status">Caricamento delle guide…</div></section>
   </main>
 
@@ -117,67 +122,58 @@ collaudare dopo la pubblicazione. Nessun PDF dell'utente è incluso nel file.
   <script>
   (() => {
     "use strict";
-    /* CONFIGURAZIONE GITHUB
-       Caso normale: galleria-guide.html e cartella pdf nella radice del sito
-       https://UTENTE.github.io/REPOSITORY/ . Puoi lasciare questi valori vuoti.
-       Dominio personalizzato o struttura diversa: compila owner e repo.
-       branch: ramo usato da Pages; vuoto = ramo predefinito del repository.
-       sourceRoot: "docs" se Pages pubblica dalla cartella /docs, altrimenti "".
-       folder: cartella dei PDF, relativa a questo HTML. Solo file diretti.
-       Non inserire token o password: il repository deve essere pubblico.
-       Pubblica con GitHub Pages, non con il link github.com/.../blob/...
-       WordPress: incorpora l'URL Pages in un iframe, senza plugin.
-    */
-    const CONFIG = {
-      owner: "",
-      repo: "",
-      branch: "",
-      sourceRoot: "",
-      folder: "pdf"
-    };
+    // true = mostra intestazione; false = nasconde intestazione.
+    const CONFIG = { showHeader: false };
+    const headerOption=new URL(location.href).searchParams.get("header");
+    const showHeader=headerOption==="true"?true:headerOption==="false"?false:CONFIG.showHeader;
+    document.querySelector("#galleryHeader").hidden=!showHeader;
+
+    const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRnbHCs4ZDmMDJYRyP5vbQ4iY97UKBfe-_THwDbICkgeHy7plN96vXHZXzi1mvWsW5dtZBY1nfoN0sI/pub?gid=2071037840&single=true&output=csv";
 
     const gallery=document.querySelector("#gallery"), count=document.querySelector("#count"), search=document.querySelector("#search");
     const reader=document.querySelector("#reader"), stage=document.querySelector("#stage"), title=document.querySelector("#readerTitle"), original=document.querySelector("#openOriginal");
     let records=[], opener=null;
+    // Percorsi relativi riferiti all’HTML su GitHub Pages.
+    const catalogueBase=new URL(".",location.href).href;
     const normalize=s=>String(s||"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
-    const encodePath=path=>path.split("/").filter(Boolean).map(encodeURIComponent).join("/");
-    function cleanPath(path){
-      const parts=String(path||"").split("/").filter(Boolean);
-      if(parts.some(p=>p==="."||p===".."||p.includes("\\")))throw Error("Usa cartelle senza punti relativi o barre inverse nella configurazione.");
-      return parts.join("/");
+    function safeUrl(value,base=catalogueBase){
+      if(!String(value||"").trim())return "";
+      try{const u=new URL(String(value).trim(),base);return ["https:","http:"].includes(u.protocol)?u.href:"";}catch{return "";}
     }
-    function githubLocation(){
-      if(!["https:","http:"].includes(location.protocol))throw Error("Pubblica questo HTML su GitHub Pages: non aprirlo con doppio clic dal computer.");
-      const parts=location.pathname.split("/").filter(Boolean).map(decodeURIComponent);
-      // This deliverable has a filename; the last component is the HTML file.
-      if(!location.pathname.endsWith("/"))parts.pop();
-      let owner=CONFIG.owner.trim(),repo=CONFIG.repo.trim(),relative=parts.slice();
-      if(location.hostname.endsWith(".github.io")){
-        owner=owner||location.hostname.slice(0,-10);
-        if(!repo){repo=parts.length?parts[0]:owner+".github.io";}
-        if(repo.toLowerCase()!==(owner+".github.io").toLowerCase()&&relative[0]===repo)relative.shift();
+    function directPdfUrl(value){
+      const cleaned=safeUrl(value);if(!cleaned)return "";
+      const u=new URL(cleaned);
+      if(u.protocol==="http:"&&u.hostname.endsWith(".github.io"))u.protocol="https:";
+      return u.href;
+    }
+    function parseCSV(text){
+      const rows=[];let row=[],field="",quoted=false;
+      for(let i=0;i<text.length;i++){
+        const ch=text[i];
+        if(quoted){if(ch==='"'&&text[i+1]==='"'){field+='"';i++;}else if(ch==='"')quoted=false;else field+=ch;}
+        else if(ch==='"')quoted=true;
+        else if(ch===','){row.push(field);field="";}
+        else if(ch==='\n'){row.push(field);rows.push(row);row=[];field="";}
+        else if(ch!=='\r')field+=ch;
       }
-      if(!owner||!repo)throw Error("Compila owner e repo nel blocco CONFIG dell'HTML per usare questo dominio.");
-      if(!/^[a-z0-9-]+$/i.test(owner)||!/^[-a-z0-9_.]+$/i.test(repo))throw Error("CONFIG: owner o repo non validi.");
-      const folder=cleanPath(CONFIG.folder);
-      const path=cleanPath([CONFIG.sourceRoot,...relative,folder].filter(Boolean).join("/"));
-      const api=new URL("https://api.github.com/repos/"+encodeURIComponent(owner)+"/"+encodeURIComponent(repo)+"/contents/"+encodePath(path));
-      if(CONFIG.branch.trim())api.searchParams.set("ref",CONFIG.branch.trim());
-      const pdfBase=new URL(encodePath(folder)+(folder?"/":""),new URL(".",location.href));
-      return {api:api.href,pdfBase};
+      if(quoted)throw Error("Il CSV contiene un campo con virgolette non chiuse.");
+      if(field.length||row.length){row.push(field);rows.push(row);}return rows;
     }
-    function filesToRecords(files,base){
-      if(!Array.isArray(files))throw Error("Il percorso configurato deve indicare una cartella del repository.");
-      if(files.length>=1000)throw Error("La cartella raggiunge il limite dell'API GitHub (1.000 elementi). Suddividi il catalogo prima di continuare.");
-      return files.filter(f=>f&&f.type==="file"&&typeof f.name==="string"&&/\.pdf$/i.test(f.name)&&!/[\/\\]/.test(f.name))
-        .map(f=>({title:f.name.replace(/\.pdf$/i,"").replace(/[_-]+/g," ").trim()||f.name,body:"Documento PDF",pdf:new URL(encodeURIComponent(f.name),base).href,image:""}))
-        .sort((a,b)=>a.title.localeCompare(b.title,"it",{numeric:true,sensitivity:"base"}));
+    function rowsToRecords(rows){
+      const headers=(rows.shift()||[]).map(normalize);
+      const find=(...names)=>headers.findIndex(h=>names.some(n=>h===n||h.startsWith(n+" ")));
+      const t=find("titolo"),b=find("contenuto","descrizione"),p=find("url per leggere","url pdf","pdf"),im=find("url immagine anteprima","immagine anteprima","anteprima");
+      if([t,b,p,im].some(i=>i<0))throw Error("Il CSV deve avere le colonne: titolo, contenuto, url per leggere, url immagine anteprima.");
+      return cleanRecords(rows.map(r=>({title:r[t],body:r[b],pdf:r[p],image:r[im]})));
+    }
+    function cleanRecords(items){
+      return items.filter(x=>x&&typeof x==="object").map(x=>({title:String(x.title||x.titolo||"").trim(),body:String(x.body||x.descrizione||""),pdf:directPdfUrl(x.pdf||x.file),image:safeUrl(x.image||x.immagine)})).filter(x=>x.title&&x.pdf);
     }
     function status(message){const el=document.createElement("div");el.className="status";el.textContent=message;gallery.replaceChildren(el);}
     function renderCards(list){
       count.textContent=list.length;
       gallery.replaceChildren();
-      if(!list.length){status(records.length?"Nessuna guida corrisponde alla ricerca.":"Nessun PDF nella cartella configurata. Carica i file direttamente nella cartella pdf del repository, senza sottocartelle.");return;}
+      if(!list.length){status(records.length?"Nessuna guida corrisponde alla ricerca.":"Nessuna guida disponibile nel CSV. Controlla titolo e url per leggere nelle righe del foglio.");return;}
       for(const x of list){
         const card=document.createElement("article");card.className="card";
         const cover=document.createElement("div");cover.className="cover no-image";
@@ -190,23 +186,22 @@ collaudare dopo la pubblicazione. Nessun PDF dell'utente è incluso nel file.
         body.append(heading,desc,link);card.append(cover,body);gallery.append(card);
       }
     }
+    async function get(url){
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+      try{const response=await fetch(url,{cache:"no-store",signal:controller.signal});const text=await response.text();return {response,text};}finally{clearTimeout(timer);}
+    }
     async function loadCatalogue(){
-      let controller,timer;
       try{
-        const source=githubLocation();
-        controller=new AbortController();timer=setTimeout(()=>controller.abort(),15000);
-        const response=await fetch(source.api,{headers:{Accept:"application/vnd.github+json"},signal:controller.signal});
-        if(!response.ok){
-          if(response.status===404)throw Error("Repository, ramo o cartella non trovati. Controlla CONFIG, maiuscole/minuscole e che il repository sia pubblico.");
-          if(response.status===403||response.status===429)throw Error("GitHub ha limitato le richieste oppure l'accesso. Attendi e riprova più tardi.");
-          throw Error("GitHub risponde con errore HTTP "+response.status+".");
-        }
-        records=filesToRecords(await response.json(),source.pdfBase);
+        if(!["https:","http:"].includes(location.protocol))throw Error("Apri la galleria dall'indirizzo HTTPS di GitHub Pages.");
+        const {response,text}=await get(CSV_URL);
+        if(!response.ok)throw Error("Il foglio Google risponde con errore HTTP "+response.status+".");
+        if(/^\s*(?:<!doctype\s+html|<html)/i.test(text))throw Error("Google ha restituito una pagina web anziché il CSV. Controlla la pubblicazione del foglio.");
+        records=rowsToRecords(parseCSV(text.replace(/^\uFEFF/,"")));
         applySearch();
       }catch(error){
         console.error(error);
-        status("Impossibile caricare le guide. "+(error.name==="AbortError"?"GitHub non risponde: ricarica la pagina.":error.message));
-      }finally{clearTimeout(timer);}
+        status("Impossibile caricare le guide. "+(error.name==="AbortError"?"Il foglio Google non risponde: ricarica la pagina.":error.message)+" Verifica che il foglio sia pubblicato sul web come CSV.");
+      }
     }
     function openPDF(item,link){
       opener=link;title.textContent=item.title;original.href=item.pdf;
