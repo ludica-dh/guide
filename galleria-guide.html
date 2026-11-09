@@ -1,5 +1,30 @@
 <!doctype html>
 <html lang="it">
+<!--
+COME PUBBLICARE
+1. Carica questo HTML nella radice del repository pubblico.
+2. Crea accanto all'HTML una cartella chiamata pdf e carica lì i documenti.
+3. Abilita GitHub Pages nelle impostazioni del repository e apri l'URL Pages.
+4. Se Pages pubblica dalla cartella docs, metti HTML e pdf dentro docs e
+   imposta sourceRoot: "docs" nel blocco CONFIG più sotto.
+5. Se il ramo Pages non è quello predefinito del repository, imposta branch.
+6. Usa nomi esatti: GitHub distingue maiuscole/minuscole. Niente sottocartelle.
+7. WordPress: inserisci nel blocco HTML personalizzato questo iframe,
+   sostituendo UTENTE, REPOSITORY e il nome dell'HTML se lo hai rinominato:
+   <iframe src="https://UTENTE.github.io/REPOSITORY/galleria-guide-github.html"
+     title="Guide del LUDiCa" width="100%" height="900"
+     style="border:0;width:100%;display:block" loading="lazy"></iframe>
+
+Le schede prendono il titolo dal nome del PDF; la ricerca riguarda il titolo.
+Dopo ogni caricamento attendi la pubblicazione di Pages e ricarica la galleria.
+Il lettore nativo del browser offre i propri comandi; su dispositivi che non
+supportano PDF incorporati usa Apri PDF. Non sono incluse miniature delle pagine.
+L'elenco usa l'API pubblica GitHub, soggetta a limiti di richieste e di elementi
+per cartella. Documentazione: https://docs.github.com/en/rest/repos/contents
+Non sono richiesti token, plugin, file JSON o librerie esterne per il lettore.
+Verificata la logica con dati simulati; rendering PDF e repository reale da
+collaudare dopo la pubblicazione. Nessun PDF dell'utente è incluso nel file.
+-->
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -41,9 +66,17 @@
     .controls{display:flex;flex-wrap:wrap;gap:7px;justify-content:flex-end;align-items:center}
     .controls button{min-width:38px;border:1px solid #535b62;border-radius:8px;background:#30363b;color:#fff;padding:7px 10px}
     .controls button:hover,.controls button:focus-visible{border-color:#fff;background:#454d54}
-    .page-label{min-width:88px;text-align:center;font-size:.9rem;color:#d8dde1}
-    .stage{overflow:auto;display:grid;place-items:start center;padding:22px;background:#454b50;overscroll-behavior:contain}
-    canvas{display:block;max-width:none;background:white;box-shadow:0 8px 28px rgba(0,0,0,.35)}
+    .stage{min-height:0;overflow:hidden;display:flex;flex-direction:column;background:#454b50;overscroll-behavior:contain}
+    .pdf-frame{display:block;width:100%;flex:1;min-height:200px;border:0;background:#fff}
+    .reader-help{margin:0;padding:10px 16px;font-size:.86rem;background:#30363b;color:#fff}
+    .reader-help a,.controls a{color:#fff;text-decoration:underline}
+    .controls a{padding:7px 10px;border:1px solid #535b62;border-radius:8px}
+    .card-link{color:inherit;text-decoration:none}
+    button:focus-visible,a:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+    body.reading{overflow:hidden}
+    .dialog:not([open]){display:none}
+    @supports not (height:100dvh){.dialog{height:94vh}}
+    @supports (height:100dvh){.dialog{height:94dvh}}
     .viewer-message{align-self:center;max-width:680px;border-radius:12px;background:#fff;color:var(--ink);padding:18px 22px;text-align:center}
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
     @media(max-width:700px){.site{padding:22px 16px}.hero{grid-template-columns:1fr}.counter{text-align:left}.viewer-head{grid-template-columns:1fr}.controls{justify-content:flex-start}.dialog{width:100vw;height:100vh;border-radius:0}.stage{padding:10px}}
@@ -61,9 +94,10 @@
       <div class="counter" aria-live="polite"><strong id="count">0</strong><span>guide</span></div>
     </header>
     <div class="tools">
-      <label class="sr-only" for="search">Cerca nelle guide</label>
-      <input class="search" id="search" type="search" placeholder="Cerca per titolo o contenuto…" autocomplete="off">
+      <label class="sr-only" for="search">Cerca per titolo delle guide</label>
+      <input class="search" id="search" type="search" placeholder="Cerca una guida…" autocomplete="off">
     </div>
+    <noscript>Attiva JavaScript per caricare l’elenco dei PDF da GitHub.</noscript>
     <section class="grid" id="gallery" aria-live="polite"><div class="status">Caricamento delle guide…</div></section>
   </main>
 
@@ -72,12 +106,7 @@
       <header class="viewer-head">
         <h2 class="viewer-title" id="readerTitle">Guida</h2>
         <div class="controls" aria-label="Comandi del lettore">
-          <button id="prev" type="button" title="Pagina precedente" aria-label="Pagina precedente">←</button>
-          <span class="page-label" id="pageLabel">Pagina 1 / 1</span>
-          <button id="next" type="button" title="Pagina successiva" aria-label="Pagina successiva">→</button>
-          <button id="zoomOut" type="button" title="Riduci" aria-label="Riduci">−</button>
-          <button id="zoomIn" type="button" title="Ingrandisci" aria-label="Ingrandisci">+</button>
-          <button id="fit" type="button" title="Adatta alla larghezza">Adatta</button>
+          <a id="openOriginal" href="#" target="_blank" rel="noopener noreferrer">Apri PDF ↗</a>
           <button id="closeReader" type="button" title="Chiudi" aria-label="Chiudi">×</button>
         </div>
       </header>
@@ -85,123 +114,114 @@
     </div>
   </dialog>
 
-  <script type="module">
-    import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@latest/build/pdf.min.mjs";
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@latest/build/pdf.worker.min.mjs";
-
-    const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRnbHCs4ZDmMDJYRyP5vbQ4iY97UKBfe-_THwDbICkgeHy7plN96vXHZXzi1mvWsW5dtZBY1nfoN0sI/pub?gid=2071037840&single=true&output=csv";
-    const gallery = document.querySelector("#gallery");
-    const count = document.querySelector("#count");
-    const search = document.querySelector("#search");
-    const reader = document.querySelector("#reader");
-    const stage = document.querySelector("#stage");
-    const readerTitle = document.querySelector("#readerTitle");
-    const pageLabel = document.querySelector("#pageLabel");
-    let records = [], pdf = null, pageNumber = 1, scale = 1.25, renderTask = null, fitWidth = true;
-
-    function parseCSV(text){
-      const rows=[]; let row=[], field="", quoted=false;
-      for(let i=0;i<text.length;i++){
-        const ch=text[i];
-        if(quoted){
-          if(ch==='"' && text[i+1]==='"'){field+='"';i++;}
-          else if(ch==='"'){quoted=false;}
-          else field+=ch;
-        }else if(ch==='"'){quoted=true;}
-        else if(ch===','){row.push(field);field="";}
-        else if(ch==='\n'){row.push(field);rows.push(row);row=[];field="";}
-        else if(ch!=='\r'){field+=ch;}
-      }
-      if(field.length||row.length){row.push(field);rows.push(row);}
-      return rows;
-    }
-    const normalize=s=>String(s||"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
-    const safeUrl=value=>{try{const u=new URL(String(value||"").trim(),location.href);return ["http:","https:"].includes(u.protocol)?u.href:"";}catch{return "";}};
-    const directPdfUrl=value=>{
-      const cleaned=safeUrl(value);
-      if(!cleaned) return "";
-      try{
-        const u=new URL(cleaned);
-        /* Evita il blocco "mixed content": una pagina HTTPS non può caricare
-           un PDF indicato con HTTP. GitHub Pages è disponibile in HTTPS. */
-        if(u.protocol==="http:" && u.hostname.toLowerCase().endsWith(".github.io")){
-          u.protocol="https:";
-        }
-        /* Converte automaticamente:
-           https://github.com/utente/repository/blob/ramo/cartella/file.pdf
-           in:
-           https://raw.githubusercontent.com/utente/repository/ramo/cartella/file.pdf */
-        if(u.hostname.toLowerCase()==="github.com"){
-          const parts=u.pathname.split("/").filter(Boolean);
-          const marker=parts.indexOf("blob");
-          if(marker===2 && parts.length>4){
-            const [owner,repo]=parts;
-            const remainder=parts.slice(marker+1).map(decodeURIComponent).map(encodeURIComponent).join("/");
-            return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${remainder}`;
-          }
-        }
-        return u.href;
-      }catch{return cleaned;}
+  <script>
+  (() => {
+    "use strict";
+    /* CONFIGURAZIONE GITHUB
+       Caso normale: galleria-guide.html e cartella pdf nella radice del sito
+       https://UTENTE.github.io/REPOSITORY/ . Puoi lasciare questi valori vuoti.
+       Dominio personalizzato o struttura diversa: compila owner e repo.
+       branch: ramo usato da Pages; vuoto = ramo predefinito del repository.
+       sourceRoot: "docs" se Pages pubblica dalla cartella /docs, altrimenti "".
+       folder: cartella dei PDF, relativa a questo HTML. Solo file diretti.
+       Non inserire token o password: il repository deve essere pubblico.
+       Pubblica con GitHub Pages, non con il link github.com/.../blob/...
+       WordPress: incorpora l'URL Pages in un iframe, senza plugin.
+    */
+    const CONFIG = {
+      owner: "",
+      repo: "",
+      branch: "",
+      sourceRoot: "",
+      folder: "pdf"
     };
-    function rowsToRecords(rows){
-      const headers=(rows.shift()||[]).map(normalize);
-      const find=(...names)=>headers.findIndex(h=>names.some(n=>h===n||h.startsWith(n)));
-      const iTitle=find("titolo"), iBody=find("contenuto","descrizione"), iPdf=find("url per leggere","url pdf","pdf"), iImage=find("url immagine anteprima","immagine anteprima","anteprima");
-      if(iTitle<0||iPdf<0) throw new Error("Il foglio deve contenere almeno le colonne ‘titolo’ e ‘url per leggere’. ");
-      return rows.map(r=>({title:(r[iTitle]||"").trim(),body:(r[iBody]||"").trim(),pdf:directPdfUrl(r[iPdf]),image:iImage>=0?safeUrl(r[iImage]):""})).filter(x=>x.title&&x.pdf);
+
+    const gallery=document.querySelector("#gallery"), count=document.querySelector("#count"), search=document.querySelector("#search");
+    const reader=document.querySelector("#reader"), stage=document.querySelector("#stage"), title=document.querySelector("#readerTitle"), original=document.querySelector("#openOriginal");
+    let records=[], opener=null;
+    const normalize=s=>String(s||"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
+    const encodePath=path=>path.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+    function cleanPath(path){
+      const parts=String(path||"").split("/").filter(Boolean);
+      if(parts.some(p=>p==="."||p===".."||p.includes("\\")))throw Error("Usa cartelle senza punti relativi o barre inverse nella configurazione.");
+      return parts.join("/");
     }
-    function esc(s){const e=document.createElement("span");e.textContent=s;return e.innerHTML;}
+    function githubLocation(){
+      if(!["https:","http:"].includes(location.protocol))throw Error("Pubblica questo HTML su GitHub Pages: non aprirlo con doppio clic dal computer.");
+      const parts=location.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+      // This deliverable has a filename; the last component is the HTML file.
+      if(!location.pathname.endsWith("/"))parts.pop();
+      let owner=CONFIG.owner.trim(),repo=CONFIG.repo.trim(),relative=parts.slice();
+      if(location.hostname.endsWith(".github.io")){
+        owner=owner||location.hostname.slice(0,-10);
+        if(!repo){repo=parts.length?parts[0]:owner+".github.io";}
+        if(repo.toLowerCase()!==(owner+".github.io").toLowerCase()&&relative[0]===repo)relative.shift();
+      }
+      if(!owner||!repo)throw Error("Compila owner e repo nel blocco CONFIG dell'HTML per usare questo dominio.");
+      if(!/^[a-z0-9-]+$/i.test(owner)||!/^[-a-z0-9_.]+$/i.test(repo))throw Error("CONFIG: owner o repo non validi.");
+      const folder=cleanPath(CONFIG.folder);
+      const path=cleanPath([CONFIG.sourceRoot,...relative,folder].filter(Boolean).join("/"));
+      const api=new URL("https://api.github.com/repos/"+encodeURIComponent(owner)+"/"+encodeURIComponent(repo)+"/contents/"+encodePath(path));
+      if(CONFIG.branch.trim())api.searchParams.set("ref",CONFIG.branch.trim());
+      const pdfBase=new URL(encodePath(folder)+(folder?"/":""),new URL(".",location.href));
+      return {api:api.href,pdfBase};
+    }
+    function filesToRecords(files,base){
+      if(!Array.isArray(files))throw Error("Il percorso configurato deve indicare una cartella del repository.");
+      if(files.length>=1000)throw Error("La cartella raggiunge il limite dell'API GitHub (1.000 elementi). Suddividi il catalogo prima di continuare.");
+      return files.filter(f=>f&&f.type==="file"&&typeof f.name==="string"&&/\.pdf$/i.test(f.name)&&!/[\/\\]/.test(f.name))
+        .map(f=>({title:f.name.replace(/\.pdf$/i,"").replace(/[_-]+/g," ").trim()||f.name,body:"Documento PDF",pdf:new URL(encodeURIComponent(f.name),base).href,image:""}))
+        .sort((a,b)=>a.title.localeCompare(b.title,"it",{numeric:true,sensitivity:"base"}));
+    }
+    function status(message){const el=document.createElement("div");el.className="status";el.textContent=message;gallery.replaceChildren(el);}
     function renderCards(list){
       count.textContent=list.length;
-      if(!list.length){gallery.innerHTML='<div class="status">Nessuna guida corrisponde alla ricerca.</div>';return;}
-      gallery.innerHTML=list.map((x,i)=>`<article class="card">
-        <div class="cover ${x.image?'':'no-image'}">${x.image?`<img src="${esc(x.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:''}</div>
-        <div class="card-body"><h2>${esc(x.title)}</h2><p class="description">${esc(x.body||'Apri la guida per leggerla nel visualizzatore.')}</p>
-        <button class="read" type="button" data-index="${records.indexOf(x)}">Leggi la guida</button></div></article>`).join("");
+      gallery.replaceChildren();
+      if(!list.length){status(records.length?"Nessuna guida corrisponde alla ricerca.":"Nessun PDF nella cartella configurata. Carica i file direttamente nella cartella pdf del repository, senza sottocartelle.");return;}
+      for(const x of list){
+        const card=document.createElement("article");card.className="card";
+        const cover=document.createElement("div");cover.className="cover no-image";
+        if(x.image){const img=new Image();img.alt="";img.loading="lazy";img.referrerPolicy="no-referrer";img.onload=()=>cover.classList.remove("no-image");img.onerror=()=>img.remove();img.src=x.image;cover.append(img);}
+        const body=document.createElement("div");body.className="card-body";
+        const heading=document.createElement("h2");heading.textContent=x.title;
+        const desc=document.createElement("p");desc.className="description";desc.textContent=x.body||"Apri la guida per leggerla nel visualizzatore.";
+        const link=document.createElement("a");link.className="read card-link";link.textContent="Leggi la guida";link.href=x.pdf;link.target="_blank";link.rel="noopener noreferrer";
+        link.addEventListener("click",e=>{if(e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;if(typeof reader.showModal!=="function")return;e.preventDefault();openPDF(x,link);});
+        body.append(heading,desc,link);card.append(cover,body);gallery.append(card);
+      }
     }
     async function loadCatalogue(){
+      let controller,timer;
       try{
-        const response=await fetch(CSV_URL,{cache:"no-store"});
-        if(!response.ok) throw new Error(`Errore HTTP ${response.status}`);
-        records=rowsToRecords(parseCSV(await response.text()));
-        renderCards(records);
+        const source=githubLocation();
+        controller=new AbortController();timer=setTimeout(()=>controller.abort(),15000);
+        const response=await fetch(source.api,{headers:{Accept:"application/vnd.github+json"},signal:controller.signal});
+        if(!response.ok){
+          if(response.status===404)throw Error("Repository, ramo o cartella non trovati. Controlla CONFIG, maiuscole/minuscole e che il repository sia pubblico.");
+          if(response.status===403||response.status===429)throw Error("GitHub ha limitato le richieste oppure l'accesso. Attendi e riprova più tardi.");
+          throw Error("GitHub risponde con errore HTTP "+response.status+".");
+        }
+        records=filesToRecords(await response.json(),source.pdfBase);
+        applySearch();
       }catch(error){
         console.error(error);
-        gallery.innerHTML='<div class="status"><strong>Impossibile caricare il catalogo.</strong><br>Controlla che il foglio Google sia pubblicato come CSV e che le intestazioni siano corrette.</div>';
-      }
+        status("Impossibile caricare le guide. "+(error.name==="AbortError"?"GitHub non risponde: ricarica la pagina.":error.message));
+      }finally{clearTimeout(timer);}
     }
-    async function openPDF(item){
-      readerTitle.textContent=item.title; stage.innerHTML='<div class="viewer-message">Caricamento del PDF…</div>'; reader.showModal();
-      try{
-        pdf=await pdfjsLib.getDocument({url:item.pdf}).promise; pageNumber=1; fitWidth=true; await renderPage();
-      }catch(error){
-        console.error(error); pdf=null; stage.innerHTML='<div class="viewer-message"><strong>Il PDF non può essere visualizzato.</strong><br>Usa un URL diretto al file PDF ospitato su GitHub Pages o su un server che consenta l’accesso CORS.</div>';
-      }
+    function openPDF(item,link){
+      opener=link;title.textContent=item.title;original.href=item.pdf;
+      const help=document.createElement("p");help.className="reader-help";help.textContent="Se il documento non appare, usa “Apri PDF”. Su smartphone può aprirsi nel lettore del dispositivo. I comandi di pagina, ricerca e zoom dipendono dal browser.";
+      const frame=document.createElement("iframe");frame.className="pdf-frame";frame.title="Documento PDF: "+item.title;frame.referrerPolicy="no-referrer";
+      reader.showModal();document.body.classList.add("reading");stage.replaceChildren(help,frame);
+      frame.src=item.pdf;
     }
-    async function renderPage(){
-      if(!pdf)return;
-      if(renderTask){try{renderTask.cancel();}catch{}}
-      const page=await pdf.getPage(pageNumber); const base=page.getViewport({scale:1});
-      if(fitWidth) scale=Math.max(.5,Math.min(2.8,(stage.clientWidth-44)/base.width));
-      const viewport=page.getViewport({scale}); const ratio=Math.min(window.devicePixelRatio||1,2);
-      const canvas=document.createElement("canvas"); canvas.width=Math.floor(viewport.width*ratio); canvas.height=Math.floor(viewport.height*ratio); canvas.style.width=`${viewport.width}px`; canvas.style.height=`${viewport.height}px`;
-      stage.replaceChildren(canvas); const context=canvas.getContext("2d",{alpha:false});
-      renderTask=page.render({canvasContext:context,viewport,transform:ratio!==1?[ratio,0,0,ratio,0,0]:null});
-      try{await renderTask.promise;}catch(e){if(e?.name!=="RenderingCancelledException")throw e;}
-      pageLabel.textContent=`Pagina ${pageNumber} / ${pdf.numPages}`; document.querySelector("#prev").disabled=pageNumber<=1; document.querySelector("#next").disabled=pageNumber>=pdf.numPages; stage.scrollTo({top:0,left:0});
-    }
-    gallery.addEventListener("click",e=>{const b=e.target.closest("[data-index]");if(b)openPDF(records[Number(b.dataset.index)]);});
-    search.addEventListener("input",()=>{const q=normalize(search.value);renderCards(records.filter(x=>normalize(`${x.title} ${x.body}`).includes(q)));});
-    document.querySelector("#prev").onclick=()=>{if(pdf&&pageNumber>1){pageNumber--;renderPage();}};
-    document.querySelector("#next").onclick=()=>{if(pdf&&pageNumber<pdf.numPages){pageNumber++;renderPage();}};
-    document.querySelector("#zoomOut").onclick=()=>{if(pdf){fitWidth=false;scale=Math.max(.5,scale-.2);renderPage();}};
-    document.querySelector("#zoomIn").onclick=()=>{if(pdf){fitWidth=false;scale=Math.min(3.5,scale+.2);renderPage();}};
-    document.querySelector("#fit").onclick=()=>{if(pdf){fitWidth=true;renderPage();}};
-    document.querySelector("#closeReader").onclick=()=>reader.close();
-    reader.addEventListener("click",e=>{if(e.target===reader)reader.close();});
-    reader.addEventListener("close",()=>{if(renderTask){try{renderTask.cancel();}catch{}}pdf=null;stage.innerHTML='<div class="viewer-message">Seleziona una guida.</div>';});
-    window.addEventListener("resize",()=>{if(reader.open&&pdf&&fitWidth)renderPage();},{passive:true});
+    function applySearch(){const q=normalize(search.value);renderCards(records.filter(x=>normalize(x.title+" "+x.body).includes(q)));}
+    search.addEventListener("input",applySearch);
+    document.querySelector("#closeReader").addEventListener("click",()=>reader.close());
+    reader.addEventListener("click",e=>{if(e.target===reader){const r=reader.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)reader.close();}});
+    reader.addEventListener("close",()=>{stage.replaceChildren();document.body.classList.remove("reading");if(opener&&opener.isConnected)opener.focus();original.removeAttribute("href");});
     loadCatalogue();
+  })();
   </script>
 </body>
 </html>
