@@ -129,7 +129,7 @@ Google. Non aprire questo file con file://: usa l'indirizzo HTTPS Pages.
   (() => {
     "use strict";
     // true = mostra intestazione; false = nasconde intestazione.
-    const CONFIG = { showHeader: true };
+    const CONFIG = { showHeader: false };
     const headerOption=new URL(location.href).searchParams.get("header");
     const showHeader=headerOption==="true"?true:headerOption==="false"?false:CONFIG.showHeader;
     document.querySelector("#galleryHeader").hidden=!showHeader;
